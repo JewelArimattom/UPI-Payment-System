@@ -1,4 +1,6 @@
 import React from "react";
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import "./animations.css";
 import { detectDevice } from "./deviceUtils";
 import { generateQRDataUrl } from "./qrCodeUtils";
@@ -61,7 +63,10 @@ const App: React.FC = () => {
 
   const createUpiLink = async (): Promise<{ link: string; txnId: string } | null> => {
     if (!isValidPhone(phone)) {
-      alert('Enter a valid mobile number to receive SMS confirmation (e.g., 9876543210 or +919876543210)');
+      toast.error('Enter a valid mobile number to receive SMS confirmation (e.g., 9876543210 or +919876543210)', {
+        position: "top-center",
+        autoClose: 4000,
+      });
       return null;
     }
     setLoading(true);
@@ -160,11 +165,11 @@ const App: React.FC = () => {
 
   const verifyViaSms = async () => {
     if (!transactionId) {
-      alert('Tap Pay first to start the payment.');
+      toast.warning('⚠️ Tap Pay first to start the payment.');
       return;
     }
     if (!smsContent.trim()) {
-      alert('Paste the SMS content first');
+      toast.warning('⚠️ Paste the SMS content first');
       return;
     }
     setVerifyingSms(true);
@@ -177,6 +182,7 @@ const App: React.FC = () => {
       const data = await resp.json();
       if (data.ok) {
         setVerified(true);
+        toast.success('✅ SMS verified successfully!');
         // Backend now auto-confirms on SMS verify
         if (data.status === 'confirmed') {
           setConfirmed(true);
@@ -184,11 +190,11 @@ const App: React.FC = () => {
           setTimeout(() => setShowSuccess(false), 3000);
         }
       } else {
-        alert('Could not verify from SMS: ' + (data.error || 'Unknown error'));
+        toast.error('Could not verify from SMS: ' + (data.error || 'Unknown error'));
       }
     } catch (err) {
       console.error('SMS verify error', err);
-      alert('Something went wrong. Please try again.');
+      toast.error('❌ Something went wrong. Please try again.');
     } finally {
       setVerifyingSms(false);
     }
@@ -211,26 +217,52 @@ const App: React.FC = () => {
 
   const handleConfirm = async () => {
     if (!transactionId) {
-      alert('Tap Pay first to start the payment.');
+      toast.warning('⚠️ Please tap Pay first to start the payment.');
+      return;
+    }
+
+    // Validate all required fields
+    if (!name.trim()) {
+      toast.error('⚠️ Please enter your name');
+      return;
+    }
+    if (!email.trim()) {
+      toast.error('⚠️ Please enter your email');
+      return;
+    }
+    if (!isValidPhone(phone)) {
+      toast.error('⚠️ Please enter a valid phone number');
+      return;
+    }
+
+    // Check if either SMS content or UTR/screenshot is provided
+    const hasSms = smsContent.trim().length > 0;
+    const hasUtr = upiRefInput.trim().length > 0;
+    const hasScreenshot = screenshotFile !== null;
+
+    if (!hasSms && !hasUtr && !hasScreenshot) {
+      toast.warning('⚠️ Please provide payment proof:\n• Paste SMS, OR\n• Enter UTR/Ref code, OR\n• Upload screenshot', {
+        autoClose: 5000,
+      });
       return;
     }
 
     setConfirming(true);
     try {
-      // Save details (non-blocking) so we have user info in DB
-      submitDetails();
+      // Save details to MongoDB first
+      await submitDetails();
 
       // If not verified yet, require UTR/ref and perform upload + verify
       if (!verified) {
         const ref = upiRefInput.trim();
         if (!ref) {
-          alert('Enter the UPI UTR/Ref code from your payment.');
+          toast.error('⚠️ Enter the UPI UTR/Ref code from your payment.');
           setConfirming(false);
           return;
         }
         const uploaded = await uploadTransactionRef(ref);
         if (!uploaded) {
-          alert('Could not submit the reference. Please try again.');
+          toast.error('❌ Could not submit the reference. Please try again.');
           setConfirming(false);
           return;
         }
@@ -241,11 +273,12 @@ const App: React.FC = () => {
         });
         const vData = await vResp.json();
         if (!vResp.ok || !vData.ok) {
-          alert('Verification failed. Please check the code and try again.');
+          toast.error('❌ Verification failed. Please check the code and try again.');
           setConfirming(false);
           return;
         }
         setVerified(true);
+        toast.success('✅ Payment verified!');
       }
 
       // Confirm
@@ -258,14 +291,15 @@ const App: React.FC = () => {
       if (data.ok) {
         setConfirmed(true);
         setShowSuccess(true);
+        toast.success('🎉 Payment confirmed successfully!');
         setTimeout(() => setShowSuccess(false), 3000);
       } else {
         console.error('Confirm failed', data);
-        alert(data.error || 'Could not confirm payment.');
+        toast.error(data.error || '❌ Could not confirm payment.');
       }
     } catch (err) {
       console.error(err);
-      alert('Something went wrong. Please try again.');
+      toast.error('❌ Something went wrong. Please try again.');
     } finally {
       setConfirming(false);
     }
@@ -273,15 +307,21 @@ const App: React.FC = () => {
 
 
   return (
-    <div style={{ width: "100%", maxWidth: 700 }}>
+    <div className="premium-bg" style={{ minHeight: '100vh', padding: '40px 20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="bg-grid" />
+      <div style={{ width: "100%", maxWidth: 700 }}>
       {/* Device Info Badge */}
       <div
         style={{
           textAlign: "center",
-          marginBottom: 16,
-          fontSize: 11,
-          color: "#9ca3af",
-          opacity: 0.7,
+          marginBottom: 20,
+          fontSize: 12,
+          color: "rgba(255, 255, 255, 0.9)",
+          background: 'rgba(255, 255, 255, 0.1)',
+          backdropFilter: 'blur(10px)',
+          padding: '10px 20px',
+          borderRadius: 20,
+          border: '1px solid rgba(255, 255, 255, 0.2)',
         }}
       >
         {deviceInfo.isDesktop && "📱 Desktop Mode: Scan QR code on mobile"}
@@ -292,16 +332,34 @@ const App: React.FC = () => {
       {/* Email form removed for simplified flow */}
 
       {/* Header */}
-      <div style={{ marginBottom: 32, textAlign: "center", animation: "fadeIn 0.6s ease-out" }}>
-        <h1 style={{ marginBottom: 8, fontSize: 32 }}>Order Summary</h1>
-        <p style={{ color: "#9ca3af", fontSize: 14 }}>Complete your payment securely</p>
+      <div style={{ 
+        marginBottom: 24, 
+        textAlign: "center", 
+        animation: "fadeIn 0.6s ease-out",
+        background: 'rgba(255, 255, 255, 0.95)',
+        backdropFilter: 'blur(10px)',
+        borderRadius: 16,
+        padding: '24px',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)'
+      }}>
+        <h1 style={{ 
+          marginBottom: 8, 
+          fontSize: 32, 
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          backgroundClip: 'text',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          fontWeight: 700
+        }}>Secure Payment</h1>
+        <p style={{ color: "#6b7280", fontSize: 14, margin: 0 }}>Complete your ₹1 payment securely via UPI</p>
       </div>
 
   {/* Mobile-first banner */}
       <div
         style={{
-          background: deviceInfo.isDesktop ? '#fffbeb' : '#ecfeff',
-          border: deviceInfo.isDesktop ? '1px solid #fef3c7' : '1px solid #a5f3fc',
+          background: deviceInfo.isDesktop ? 'rgba(255, 251, 235, 0.95)' : 'rgba(236, 254, 255, 0.95)',
+          backdropFilter: 'blur(10px)',
+          border: deviceInfo.isDesktop ? '1px solid rgba(254, 243, 199, 0.8)' : '1px solid rgba(165, 243, 252, 0.8)',
           color: deviceInfo.isDesktop ? '#92400e' : '#155e75',
           borderRadius: 12,
           padding: 14,
@@ -309,20 +367,34 @@ const App: React.FC = () => {
           maxWidth: 600,
           fontSize: 13,
           animation: 'fadeIn 0.6s ease-out',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)',
         }}
       >
         {deviceInfo.isDesktop
-          ? 'For the best experience, open this page on your mobile device to pay via UPI. You can also scan the QR code below.'
-      : 'You are on mobile. Enter your phone to receive SMS confirmation, then tap pay.'}
+          ? '💻 For the best experience, open this page on your mobile device to pay via UPI. You can also scan the QR code below.'
+      : '📱 You are on mobile. Enter your phone to receive SMS confirmation, then tap pay.'}
       </div>
 
       {/* Steps guide (simplified) */}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 16, fontSize: 12, color: '#6b7280' }}>
-        <div>1) Tap Pay</div>
-        <div>•</div>
-        <div>2) Enter UTR/Ref code</div>
-        <div>•</div>
-        <div>3) Confirm</div>
+      <div style={{ 
+        display: 'flex', 
+        gap: 12, 
+        justifyContent: 'center', 
+        marginBottom: 20, 
+        fontSize: 12, 
+        color: 'rgba(255, 255, 255, 0.95)',
+        background: 'rgba(255, 255, 255, 0.1)',
+        backdropFilter: 'blur(10px)',
+        padding: '12px 24px',
+        borderRadius: 20,
+        border: '1px solid rgba(255, 255, 255, 0.2)',
+        flexWrap: 'wrap'
+      }}>
+        <div style={{ fontWeight: 600 }}>1️⃣ Tap Pay</div>
+        <div>→</div>
+        <div style={{ fontWeight: 600 }}>2️⃣ Enter Details</div>
+        <div>→</div>
+        <div style={{ fontWeight: 600 }}>3️⃣ Confirm</div>
       </div>
 
       {/* Success Modal */}
@@ -334,7 +406,8 @@ const App: React.FC = () => {
             left: 0,
             right: 0,
             bottom: 0,
-            background: "rgba(0, 0, 0, 0.5)",
+            background: "rgba(0, 0, 0, 0.7)",
+            backdropFilter: 'blur(8px)',
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -345,29 +418,31 @@ const App: React.FC = () => {
           <div
             style={{
               background: "white",
-              borderRadius: 16,
-              padding: 40,
+              borderRadius: 24,
+              padding: 48,
               textAlign: "center",
-              maxWidth: 400,
+              maxWidth: 420,
               animation: "scaleIn 0.4s ease-out",
+              boxShadow: '0 25px 50px rgba(0, 0, 0, 0.3)',
             }}
           >
             <div
               style={{
-                width: 64,
-                height: 64,
+                width: 80,
+                height: 80,
                 borderRadius: "50%",
-                background: "#10b981",
+                background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                margin: "0 auto 20px",
+                margin: "0 auto 24px",
                 animation: "scaleIn 0.5s ease-out 0.2s both",
+                boxShadow: '0 10px 30px rgba(16, 185, 129, 0.4)',
               }}
             >
               <svg
-                width="32"
-                height="32"
+                width="40"
+                height="40"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="white"
@@ -378,11 +453,18 @@ const App: React.FC = () => {
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
             </div>
-            <h2 style={{ color: "#1f2937", marginBottom: 8 }}>Payment Confirmed!</h2>
-            <p style={{ color: "#6b7280", marginBottom: 20 }}>
-              Your payment has been successfully processed.
+            <h2 style={{ color: "#1f2937", marginBottom: 12, fontSize: 28, fontWeight: 700 }}>Payment Confirmed!</h2>
+            <p style={{ color: "#6b7280", marginBottom: 24, fontSize: 15 }}>
+              Your payment has been successfully processed and verified.
             </p>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#0ea5a4" }}>
+            <div style={{ 
+              fontSize: 32, 
+              fontWeight: 700, 
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}>
               ₹{order.amount.toFixed(2)}
             </div>
           </div>
@@ -392,13 +474,15 @@ const App: React.FC = () => {
       {/* Main Card */}
       <div
         style={{
-          background: "white",
-          borderRadius: 16,
+          background: "rgba(255, 255, 255, 0.98)",
+          backdropFilter: 'blur(20px)',
+          borderRadius: 20,
           padding: 32,
           maxWidth: 600,
-          boxShadow: "0 10px 30px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.08)",
+          boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3), 0 0 1px rgba(255, 255, 255, 0.5)",
           margin: "0 auto",
           animation: "slideUp 0.6s ease-out",
+          border: '1px solid rgba(255, 255, 255, 0.5)',
         }}
       >
         {/* Item Info */}
@@ -492,7 +576,7 @@ const App: React.FC = () => {
             />
             {!deviceInfo.isMobile && (
               <button
-                onClick={() => { if (isValidPhone(phone)) createUpiLink(); else alert('Enter a valid phone first'); }}
+                onClick={() => { if (isValidPhone(phone)) createUpiLink(); else toast.error('⚠️ Enter a valid phone first'); }}
                 style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #0ea5a4', background: 'white', color: '#0ea5a4', fontWeight: 700 }}
               >
                 Generate QR
@@ -540,11 +624,11 @@ const App: React.FC = () => {
         <button
           onClick={() => {
             if (deviceInfo.isDesktop) {
-              alert('Please open this page on your mobile to pay via UPI. You can also scan the QR code.');
+              toast.info('📱 Please open this page on your mobile to pay via UPI. You can also scan the QR code.');
               return;
             }
             if (!isValidPhone(phone)) {
-              alert('Enter a valid mobile number to receive SMS confirmation');
+              toast.error('⚠️ Enter a valid mobile number to receive SMS confirmation');
               return;
             }
             handlePayClick();
@@ -746,8 +830,8 @@ const App: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button
                 onClick={async () => {
-                  if (!screenshotFile) { alert('Choose a screenshot first'); return; }
-                  if (!name || !email || !phone) { alert('Please fill name, email, and phone first'); return; }
+                  if (!screenshotFile) { toast.error('⚠️ Choose a screenshot first'); return; }
+                  if (!name || !email || !phone) { toast.error('⚠️ Please fill name, email, and phone first'); return; }
                   const form = new FormData();
                   if (transactionId) form.append('transactionId', transactionId);
                   form.append('name', name);
@@ -764,13 +848,15 @@ const App: React.FC = () => {
                     const text = await resp.text();
                     const data = text ? JSON.parse(text) : {};
                     if (data.ok) {
-                      alert('✅ Screenshot received! We will verify and confirm your payment within 24 hours. Check your email/SMS.');
+                      toast.success('✅ Screenshot received! We will verify and confirm your payment within 24 hours. Check your email/SMS.', {
+                        autoClose: 6000,
+                      });
                       setShowScreenshotUpload(false);
                     } else {
-                      alert('Upload failed: ' + (data.error || 'unknown'));
+                      toast.error('❌ Upload failed: ' + (data.error || 'unknown'));
                     }
                   } catch (e) {
-                    alert('Upload error: ' + (e as any).message);
+                    toast.error('❌ Upload error: ' + (e as any).message);
                   }
                 }}
                 style={{ 
@@ -832,69 +918,61 @@ const App: React.FC = () => {
         )}
 
         {/* Confirmation Section */}
-        <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 20 }}>
-          <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 12 }}>
-            Enter your details and UTR/Ref, then press Confirm. If SMS arrives first and you verify via SMS, we auto-confirm.
-          </p>
+        <div style={{ borderTop: "2px solid #f3f4f6", paddingTop: 24, marginTop: 20 }}>
+          <div style={{ 
+            background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+            border: '1px solid #fbbf24',
+            borderRadius: 10,
+            padding: 14,
+            marginBottom: 16,
+            fontSize: 13,
+            color: '#78350f',
+            fontWeight: 600
+          }}>
+            ⚠️ Required: Name, Email, Phone + (SMS OR UTR OR Screenshot)
+          </div>
 
           <button
             onClick={handleConfirm}
             disabled={confirming || confirmed}
             style={{
               width: "100%",
-              padding: '12px 16px',
-              borderRadius: 10,
-              border: confirmed ? "none" : "1.5px solid #e5e7eb",
-              background: confirmed ? "#d1fae5" : "#ecfeff",
+              padding: '16px 20px',
+              borderRadius: 12,
+              border: 'none',
+              background: confirmed 
+                ? "linear-gradient(135deg, #10b981 0%, #059669 100%)" 
+                : confirming 
+                  ? "#94a3b8"
+                  : "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
               cursor: confirming || confirmed ? 'default' : 'pointer',
-              fontWeight: 600,
-              fontSize: 14,
-              color: confirmed ? "#059669" : "#0ea5a4",
+              fontWeight: 700,
+              fontSize: 16,
+              color: 'white',
               transition: "all 0.3s ease",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
+              boxShadow: confirmed ? "0 4px 15px rgba(16, 185, 129, 0.4)" : "0 4px 15px rgba(102, 126, 234, 0.4)",
+              transform: confirming ? 'scale(0.98)' : 'scale(1)',
             }}
             onMouseEnter={(e) => {
               if (!confirming && !confirmed) {
-                (e.target as HTMLButtonElement).style.background = "#f9fafb";
-                (e.target as HTMLButtonElement).style.borderColor = "#0ea5a4";
+                (e.target as HTMLButtonElement).style.transform = "translateY(-2px) scale(1.02)";
+                (e.target as HTMLButtonElement).style.boxShadow = "0 8px 25px rgba(102, 126, 234, 0.5)";
               }
             }}
             onMouseLeave={(e) => {
               if (!confirming && !confirmed) {
-                (e.target as HTMLButtonElement).style.background = "#ecfeff";
-                (e.target as HTMLButtonElement).style.borderColor = "#e5e7eb";
+                (e.target as HTMLButtonElement).style.transform = "translateY(0) scale(1)";
+                (e.target as HTMLButtonElement).style.boxShadow = "0 4px 15px rgba(102, 126, 234, 0.4)";
               }
             }}
           >
-            {confirmed && <span style={{ marginRight: 8 }}>✓</span>}
-            {confirming && <span className="spinner"></span>}
-            {confirmed ? 'Payment confirmed!' : confirming ? 'Confirming payment...' : 'Confirm Payment'}
+            {confirmed && <span style={{ marginRight: 8, fontSize: 20 }}>✓</span>}
+            {confirming && <span className="spinner" style={{ marginRight: 8 }}></span>}
+            {confirmed ? '✅ Payment Confirmed!' : confirming ? 'Processing...' : '🚀 Confirm Payment'}
           </button>
-
-          {/* Save details helper (non-blocking) */}
-          <div style={{ marginTop: 10, fontSize: 11, color: '#64748b' }}>
-            <button
-              onClick={async () => {
-                try {
-                  const resp = await fetch('/api/submit-details', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ transactionId, name, email, phone, utr: upiRefInput, message: note, smsContent }),
-                  });
-                  const data = await resp.json();
-                  if (!data.ok) throw new Error(data.error || 'Failed to save');
-                  alert('Details saved');
-                } catch (e) {
-                  alert('Could not save details: ' + (e as any).message);
-                }
-              }}
-              style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: 'white', color: '#334155', fontWeight: 600 }}
-            >
-              Save my details (optional)
-            </button>
-          </div>
         </div>
       </div>
 
@@ -903,13 +981,29 @@ const App: React.FC = () => {
         style={{
           marginTop: 24,
           textAlign: "center",
-          fontSize: 12,
-          color: "#9ca3af",
+          fontSize: 13,
+          color: "rgba(255, 255, 255, 0.9)",
           animation: "fadeIn 0.8s ease-out 0.4s both",
         }}
       >
-        <p>🔒 Your payment information is encrypted and secure</p>
+        <p style={{ margin: 0 }}>🔒 Your payment information is encrypted and secure</p>
       </div>
+    </div>
+    
+    {/* Toast Notifications */}
+    <ToastContainer
+      position="top-center"
+      autoClose={3000}
+      hideProgressBar={false}
+      newestOnTop
+      closeOnClick
+      rtl={false}
+      pauseOnFocusLoss
+      draggable
+      pauseOnHover
+      theme="dark"
+      style={{ zIndex: 9999 }}
+    />
     </div>
   );
 };

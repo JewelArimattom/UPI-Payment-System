@@ -9,6 +9,11 @@ const app = express();
 const port = process.env.PORT || 4000;
 const nodeEnv = process.env.NODE_ENV || 'development';
 const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const isServerless = Boolean(
+  process.env.VERCEL ||
+  process.env.AWS_LAMBDA_FUNCTION_VERSION ||
+  process.env.LAMBDA_TASK_ROOT
+);
 
 // Middleware
 app.use(express.json());
@@ -26,22 +31,9 @@ connectToMongo().then((conn) => {
     Submission = require('./models/Submission');
   }
 });
-
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-app.use('/uploads', express.static(uploadsDir));
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir);
-  },
-  filename: function (req, file, cb) {
-    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname || '.png');
-    cb(null, `ss-${unique}${ext}`);
-  },
-});
-const upload = multer({ storage });
+// Configure upload strategy based on environment
+let uploadsDir = null;
+let upload = null;
 
 // Cloudinary config (optional)
 if (process.env.CLOUDINARY_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_SECRET_KEY) {
@@ -51,8 +43,32 @@ if (process.env.CLOUDINARY_NAME && process.env.CLOUDINARY_API_KEY && process.env
     api_secret: process.env.CLOUDINARY_SECRET_KEY,
   });
   console.log('✓ Cloudinary configured');
+  // In serverless or when Cloudinary is available, use memory storage
+  upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 } else {
-  console.log('Cloudinary not configured; screenshots will be stored locally');
+  console.log('Cloudinary not configured');
+  if (isServerless) {
+    // On Vercel (read-only FS), local disk is not available
+    console.warn('⚠️ Running in serverless environment without Cloudinary. Local uploads are disabled.');
+    upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+  } else {
+    // Local/dev: allow disk storage
+    uploadsDir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    app.use('/uploads', express.static(uploadsDir));
+    const storage = multer.diskStorage({
+      destination: function (req, file, cb) {
+        cb(null, uploadsDir);
+      },
+      filename: function (req, file, cb) {
+        const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+        const ext = path.extname(file.originalname || '.png');
+        cb(null, `ss-${unique}${ext}`);
+      },
+    });
+    upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
+    console.log('✓ Local disk uploads enabled at /uploads');
+  }
 }
 
 // In-memory store for demo (use DB in production)
@@ -179,21 +195,36 @@ app.post('/api/upload-screenshot', upload.single('screenshot'), async (req, res)
     let screenshotUrl = null;
     if (req.file) {
       console.log('📁 File received:', req.file.originalname, req.file.size, 'bytes');
-      // Prefer Cloudinary if configured
-      if (cloudinary.config().cloud_name) {
+      const hasCloudinary = Boolean(process.env.CLOUDINARY_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_SECRET_KEY);
+      if (hasCloudinary && req.file.buffer) {
+        // Upload from memory buffer using upload_stream
+        console.log('☁️ Uploading to Cloudinary (buffer)...');
+        const uploaded = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream({ folder: 'upi_screenshots' }, (err, result) => {
+            if (err) return reject(err);
+            resolve(result);
+          });
+          stream.end(req.file.buffer);
+        });
+        screenshotUrl = uploaded.secure_url;
+        console.log('✅ Cloudinary upload successful:', screenshotUrl);
+      } else if (!hasCloudinary && uploadsDir && req.file.path) {
+        // Local/dev disk storage
+        screenshotUrl = `/uploads/${req.file.filename}`;
+      } else if (isServerless && !hasCloudinary) {
+        console.error('❌ Cloudinary not configured and local disk not available on serverless.');
+        return res.status(500).json({ ok: false, error: 'Cloudinary not configured. Enable Cloudinary env vars on Vercel to support uploads.' });
+      } else if (req.file.path) {
+        // Fallback: try path-based upload if available
         try {
-          console.log('☁️ Uploading to Cloudinary...');
+          console.log('☁️ Uploading to Cloudinary (path fallback)...');
           const uploaded = await cloudinary.uploader.upload(req.file.path, { folder: 'upi_screenshots' });
           screenshotUrl = uploaded.secure_url;
-          console.log('✅ Cloudinary upload successful:', screenshotUrl);
-          // Optionally remove local file
           fs.unlink(req.file.path, () => {});
         } catch (e) {
-          console.warn('⚠️ Cloudinary upload failed, keeping local file:', e.message);
-          screenshotUrl = `/uploads/${req.file.filename}`;
+          console.warn('⚠️ Upload fallback failed:', e.message);
+          screenshotUrl = null;
         }
-      } else {
-        screenshotUrl = `/uploads/${req.file.filename}`;
       }
     } else {
       console.error('❌ No file uploaded');

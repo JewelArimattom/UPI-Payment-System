@@ -72,6 +72,15 @@ Visit: **http://localhost:5173**
 2. UPI app opens → Complete payment
 3. Return to browser → Paste SMS OR wait for upload option
 
+### SMS Verification (Fastest ⚡):
+- After payment, copy bank SMS
+- Paste in blue SMS box
+- Click "Verify via SMS"
+- **Instant auto-confirmation!**
+
+📖 **Detailed Guide:** See [SMS_VERIFICATION_GUIDE.md](SMS_VERIFICATION_GUIDE.md)  
+📱 **Quick Reference:** See [SMS_QUICK_REFERENCE.md](SMS_QUICK_REFERENCE.md)
+
 ## � API Endpoints
 
 ```
