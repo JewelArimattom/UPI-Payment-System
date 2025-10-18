@@ -25,6 +25,17 @@ const sampleOrder: Order = {
 
 const App: React.FC = () => {
   const order = sampleOrder;
+  // Configure API base: set VITE_API_BASE_URL in production to your backend URL (e.g., https://your-backend.vercel.app)
+  const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL?.replace(/\/$/, '') || '';
+  const api = (p: string) => `${API_BASE}${p}`;
+  const parseJsonSafe = async (resp: Response) => {
+    const text = await resp.text();
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (e) {
+      throw new Error(`Unexpected response (status ${resp.status}): ${text.substring(0, 160)}`);
+    }
+  };
   
   // Device and payment state
   const [deviceInfo] = React.useState(detectDevice());
@@ -71,12 +82,16 @@ const App: React.FC = () => {
     }
     setLoading(true);
     try {
-      const resp = await fetch('/api/upi-link', {
+      const resp = await fetch(api('/api/upi-link'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order, phone }),
       });
-      const data = await resp.json();
+      const data = await parseJsonSafe(resp);
+      if (!resp.ok) {
+        toast.error(`Failed to create UPI link (${resp.status}). ${data.error || ''}`.trim());
+        return null;
+      }
       if (data.upiLink && data.transactionId) {
         setUpiLink(data.upiLink);
         setTransactionId(data.transactionId);
@@ -94,6 +109,7 @@ const App: React.FC = () => {
       return null;
     } catch (err) {
       console.error('Error creating UPI link:', err);
+      toast.error((err as any)?.message || 'Failed to create UPI link');
       return null;
     } finally {
       setLoading(false);
@@ -128,12 +144,16 @@ const App: React.FC = () => {
     
     setUploadingRef(true);
     try {
-      const resp = await fetch('/api/upload-upi-ref', {
+      const resp = await fetch(api('/api/upload-upi-ref'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactionId, upiRefNumber: upiRef }),
       });
-      const data = await resp.json();
+      const data = await parseJsonSafe(resp);
+      if (!resp.ok) {
+        console.error('Upload failed:', data);
+        return false;
+      }
       if (data.ok) {
         setUpiRefInput("");
         return true;
@@ -174,12 +194,15 @@ const App: React.FC = () => {
     }
     setVerifyingSms(true);
     try {
-      const resp = await fetch('/api/sms-verify', {
+      const resp = await fetch(api('/api/sms-verify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactionId, smsContent }),
       });
-      const data = await resp.json();
+      const data = await parseJsonSafe(resp);
+      if (!resp.ok) {
+        throw new Error(data.error || `SMS verify failed (${resp.status})`);
+      }
       if (data.ok) {
         setVerified(true);
         toast.success('✅ SMS verified successfully!');
@@ -203,13 +226,13 @@ const App: React.FC = () => {
   const submitDetails = async () => {
     try {
       if (!name || !email || !phone) return; // skip if incomplete
-      const resp = await fetch('/api/submit-details', {
+      const resp = await fetch(api('/api/submit-details'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactionId, name, email, phone, utr: upiRefInput, message: note, smsContent }),
       });
-      // ignore response handling; non-blocking
-      await resp.json().catch(() => null);
+      // ignore response handling; non-blocking, but avoid JSON parse errors
+      await resp.text().catch(() => null);
     } catch {
       // non-blocking
     }
@@ -266,12 +289,12 @@ const App: React.FC = () => {
           setConfirming(false);
           return;
         }
-        const vResp = await fetch('/api/verify-payment', {
+        const vResp = await fetch(api('/api/verify-payment'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ transactionId }),
         });
-        const vData = await vResp.json();
+        const vData = await parseJsonSafe(vResp);
         if (!vResp.ok || !vData.ok) {
           toast.error('❌ Verification failed. Please check the code and try again.');
           setConfirming(false);
@@ -282,12 +305,12 @@ const App: React.FC = () => {
       }
 
       // Confirm
-      const resp = await fetch('/api/confirm-payment', {
+      const resp = await fetch(api('/api/confirm-payment'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactionId }),
       });
-      const data = await resp.json();
+      const data = await parseJsonSafe(resp);
       if (data.ok) {
         setConfirmed(true);
         setShowSuccess(true);
@@ -841,7 +864,7 @@ const App: React.FC = () => {
                   form.append('message', note);
                   form.append('screenshot', screenshotFile);
                   try {
-                    const resp = await fetch('/api/upload-screenshot', { method: 'POST', body: form });
+                    const resp = await fetch(api('/api/upload-screenshot'), { method: 'POST', body: form });
                     if (!resp.ok) {
                       throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
                     }

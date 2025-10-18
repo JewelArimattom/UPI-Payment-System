@@ -19,7 +19,10 @@ const isServerless = Boolean(
 app.use(express.json());
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', corsOrigin);
+  res.header('Vary', 'Origin');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') return res.status(204).end();
   next();
 });
 
@@ -31,6 +34,17 @@ connectToMongo().then((conn) => {
     Submission = require('./models/Submission');
   }
 });
+
+// Lazy connector in case cold start didn't connect or env was missing
+async function ensureDb() {
+  if (Submission) return Submission;
+  const conn = await connectToMongo();
+  if (conn) {
+    Submission = require('./models/Submission');
+    return Submission;
+  }
+  return null;
+}
 // Configure upload strategy based on environment
 let uploadsDir = null;
 let upload = null;
@@ -168,8 +182,9 @@ app.post('/api/submit-details', async (req, res) => {
   }
   const payload = { transactionId: transactionId || null, name, email, phone, utr: utr || null, message: message || null, smsContent: smsContent || null, status: 'submitted' };
   try {
-    if (Submission) {
-      const doc = await Submission.create(payload);
+    const Model = await ensureDb();
+    if (Model) {
+      const doc = await Model.create(payload);
       console.log('✅ Saved to MongoDB with ID:', doc._id);
       return res.json({ ok: true, id: doc._id });
     }
@@ -231,8 +246,9 @@ app.post('/api/upload-screenshot', upload.single('screenshot'), async (req, res)
       return res.status(400).json({ ok: false, error: 'No screenshot file provided' });
     }
 
-    if (Submission) {
-      const doc = await Submission.create({ 
+    const Model = await ensureDb();
+    if (Model) {
+      const doc = await Model.create({ 
         transactionId, 
         name, 
         email, 
@@ -526,25 +542,28 @@ app.post('/api/sms-forward', async (req, res) => {
 // Test endpoint to verify MongoDB connection and collection
 app.get('/api/test-db', async (req, res) => {
   try {
-    if (!Submission) {
-      return res.json({ 
+    const model = await ensureDb();
+    if (!model) {
+      return res.json({
+        ok: false,
+        mongodb: 'Not connected',
+        haveUri: Boolean(process.env.MONGODB_URI || process.env.MONGO_URI),
         error: 'Submission model not loaded',
-        mongodb: 'Not connected'
       });
     }
-    const count = await Submission.countDocuments();
-    const collectionName = Submission.collection.name;
-    const dbName = Submission.db.name;
-    return res.json({ 
+    const count = await model.countDocuments();
+    const collectionName = model.collection.name;
+    const dbName = model.db.name;
+    return res.json({
       ok: true,
       mongodb: 'Connected',
       database: dbName,
       collection: collectionName,
       totalRecords: count,
-      message: `Check MongoDB Atlas -> ${dbName} database -> ${collectionName} collection`
+      message: `Check MongoDB Atlas -> ${dbName} database -> ${collectionName} collection`,
     });
   } catch (e) {
-    return res.json({ error: e.message });
+    return res.json({ ok: false, error: e.message });
   }
 });
 
@@ -559,4 +578,8 @@ app.listen(port, () => {
   console.log(`  POST /api/sms-verify - SMS-based verification (PWA skeleton)`);
   console.log(`  GET /api/test-db - Test MongoDB connection and show collection info\n`);
 });
+
+// Quietly handle favicon to avoid noisy 404/500 logs
+app.get('/favicon.ico', (_req, res) => res.status(204).end());
+app.get('/favicon.png', (_req, res) => res.status(204).end());
 
