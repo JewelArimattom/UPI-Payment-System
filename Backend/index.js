@@ -9,6 +9,12 @@ const app = express();
 const port = process.env.PORT || 4000;
 const nodeEnv = process.env.NODE_ENV || 'development';
 const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const allowedOrigins = String(corsOrigin)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const allowedOriginsNormalized = allowedOrigins.map((s) => s.replace(/\/$/, ''));
+const debugCors = process.env.DEBUG_CORS === '1' || process.env.DEBUG_CORS === 'true';
 const isServerless = Boolean(
   process.env.VERCEL ||
   process.env.AWS_LAMBDA_FUNCTION_VERSION ||
@@ -18,10 +24,29 @@ const isServerless = Boolean(
 // Middleware
 app.use(express.json());
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', corsOrigin);
+  const origin = req.headers.origin;
+  const originNormalized = origin ? origin.replace(/\/$/, '') : '';
+  const allowAll = allowedOriginsNormalized.includes('*');
+  const isAllowed = allowAll || (origin && allowedOriginsNormalized.includes(originNormalized));
+
+  // Reflect the request origin if allowed (or '*')
+  if (isAllowed) {
+    // Use normalized origin to avoid accidental trailing slashes
+    res.header('Access-Control-Allow-Origin', allowAll ? '*' : originNormalized);
+  }
+
   res.header('Vary', 'Origin');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  // Only advertise credentials when not using wildcard origins
+  if (!allowAll) {
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
+  // Cache successful preflights for a short period
+  res.header('Access-Control-Max-Age', '600');
+  if (debugCors) {
+    console.log('CORS:', { origin, isAllowed, allowAll, allowedOrigins });
+  }
   if (req.method === 'OPTIONS') return res.status(204).end();
   next();
 });
@@ -582,4 +607,30 @@ app.listen(port, () => {
 // Quietly handle favicon to avoid noisy 404/500 logs
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 app.get('/favicon.png', (_req, res) => res.status(204).end());
+
+// Health check and diagnostics
+app.get('/api/health', async (req, res) => {
+  const origin = req.headers.origin || null;
+  const originNormalized = origin ? origin.replace(/\/$/, '') : null;
+  const allowAll = allowedOriginsNormalized.includes('*');
+  const isAllowed = allowAll || (originNormalized && allowedOriginsNormalized.includes(originNormalized));
+  const haveUri = Boolean(process.env.MONGODB_URI || process.env.MONGO_URI);
+  const modelLoaded = Boolean(Submission);
+  return res.json({
+    ok: true,
+    nodeEnv,
+    serverless: isServerless,
+    cors: {
+      requestOrigin: origin,
+      isAllowed,
+      allowAll,
+      allowedOrigins,
+      allowedOriginsNormalized,
+    },
+    db: {
+      haveUri,
+      modelLoaded,
+    },
+  });
+});
 

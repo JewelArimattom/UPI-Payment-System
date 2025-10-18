@@ -58,3 +58,5 @@ dist/
 /ARCHITECTURE.md
 /Backend/README.md
 /Frontend/.env
+/Frontend/.env.development
+/Frontend/.env.production
