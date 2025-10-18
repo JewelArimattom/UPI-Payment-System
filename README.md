@@ -13,7 +13,6 @@ A simple UPI payment demo: **Pay ₹1 to jewelat50@oksbi** with SMS confirmation
 4. Either:
    - **Paste SMS** → Auto-verify instantly ✅
    - **Wait 90 seconds** → Upload screenshot → Manual review within 24h
-   - **Enter UTR manually** → Click confirm
 
 ### Features:
 - **Mobile-First**: Desktop shows QR code, mobile opens UPI app
@@ -78,10 +77,7 @@ Visit: **http://localhost:5173**
 - Click "Verify via SMS"
 - **Instant auto-confirmation!**
 
-📖 **Detailed Guide:** See [SMS_VERIFICATION_GUIDE.md](SMS_VERIFICATION_GUIDE.md)  
-📱 **Quick Reference:** See [SMS_QUICK_REFERENCE.md](SMS_QUICK_REFERENCE.md)
-
-## � API Endpoints
+## 🧩 API Endpoints
 
 ```
 POST /api/upi-link            # Create payment link
@@ -89,6 +85,7 @@ POST /api/submit-details      # Save user details
 POST /api/upload-screenshot   # Upload image & save to DB
 POST /api/sms-verify          # Auto-verify from SMS
 POST /api/sms-forward         # Auto-confirm forwarded SMS
+GET  /api/health              # Health + CORS diagnostics
 GET  /api/test-db            # Test MongoDB connection
 ```
 
@@ -97,6 +94,7 @@ GET  /api/test-db            # Test MongoDB connection
 ```env
 # Server
 PORT=4000
+NODE_ENV=production
 
 # MongoDB Atlas
 MONGODB_URI=mongodb+srv://your_user:your_password@cluster0.xxx.mongodb.net/Anna
@@ -110,6 +108,12 @@ CLOUDINARY_SECRET_KEY=your_secret
 TWILIO_ACCOUNT_SID=your_sid
 TWILIO_AUTH_TOKEN=your_token
 TWILIO_PHONE_NUMBER=your_number
+
+# CORS (comma-separated, no trailing slashes)
+CORS_ORIGIN=http://localhost:5173, https://upi-payment-system-kappa.vercel.app, https://upi-payment-system.vercel.app
+
+# SMS Forwarder security (Optional)
+FORWARDER_SECRET=replace-with-strong-secret
 ```
 
 ### Get Credentials:
@@ -120,13 +124,12 @@ TWILIO_PHONE_NUMBER=your_number
 ## 💾 Database
 
 **MongoDB Atlas:**
-- Database: `Anna`
+- Database: `Payment`
 - Collection: `submissions`
 
 **Data Stored:**
 - Transaction ID
 - Name, Email, Phone
-- UTR/Ref code
 - Message (optional)
 - Screenshot URL (Cloudinary)
 - SMS content (if pasted)
@@ -137,33 +140,20 @@ TWILIO_PHONE_NUMBER=your_number
 ```
 http://localhost:4000/api/test-db
 ```
-
-## 🐛 Troubleshooting
-
-**Port already in use:**
-```powershell
-Get-Process | Where-Object {$_.Name -like "*node*"} | Stop-Process -Force
-```
-
-**No data in MongoDB:**
-- Check you're viewing `submissions` collection (not "Payment")
-- Visit: http://localhost:4000/api/test-db
-- Check backend terminal for "✅ Saved to MongoDB with ID: ..."
-
-**Frontend can't connect:**
-- Backend must run on port 4000
-- Frontend must run on port 5173
-
 **Timer not starting:**
 - Timer starts when QR generates (desktop) or Pay button clicked (mobile)
 
-## � Important Notes
+**CORS blocked:**
+- Ensure `CORS_ORIGIN` includes your frontend origin(s) without trailing slashes. Use `/api/health` to verify.
+
+## 🔒 Important Notes
 
 1. **Fixed Payment**: Always ₹1 to jewelat50@oksbi (hardcoded)
 2. **Desktop Blocked**: Payment only works on mobile (desktop shows QR)
 3. **Timer**: 90 seconds before screenshot upload appears
 4. **Collections**: Data saves to `submissions` NOT `Payment`
 5. **SMS Optional**: Works with or without Twilio credentials
+6. **Auto-Confirm**: Use `/api/sms-forward` with `x-forwarder-secret` for server-side SMS forwarding.
 
 ## 🛠 Tech Stack
 
@@ -173,6 +163,43 @@ Get-Process | Where-Object {$_.Name -like "*node*"} | Stop-Process -Force
 - **Storage**: Cloudinary (images)
 - **SMS**: Twilio (optional)
 
----
+## 📲 SMS-Forward Auto-Confirm (Implementation)
 
-**Simple. Clean. Works. 🚀**
+Automatic confirmation can be achieved by forwarding the bank SMS to your backend:
+
+1) Configure backend env:
+```
+FORWARDER_SECRET=replace-with-strong-secret
+```
+
+2) Forwarder (Android app or SMS provider webhook) calls:
+```
+POST /api/sms-forward
+Headers: { "Content-Type": "application/json", "x-forwarder-secret": "<secret>" }
+Body: { "phone": "+919061336064", "smsContent": "Txn XXXX of Rs1.00 ... UPI Ref ABC123 ..." }
+```
+
+3) Backend behavior:
+- Finds the latest transaction for the phone
+- Parses UPI ref/amount/VPA, validates constraints
+- Marks the order as `confirmed`
+
+
+## 💡 Better than Deep Links: Stronger Options
+
+- PSP Webhooks (Razorpay/Cashfree/PhonePe/Paytm for Business):
+   - Create order/collect; receive webhooks on success; map to `transactionId` and update status.
+   - Strongest and most reliable for production.
+
+- Android SMS-Forwarder App:
+   - On-device BroadcastReceiver forwards payment SMS to `/api/sms-forward` with `x-forwarder-secret`.
+   - Near real-time auto-confirm; requires one-time user permission.
+
+- Inbound SMS Provider (Twilio/MSG91/Sinch):
+   - If bank SMS can be routed to your service number, configure provider webhook → `/api/sms-forward`.
+
+- Email Receipt Parsing:
+   - Parse payment receipt emails via inbox parser (SES/SendGrid inbound) and map to transactions.
+
+- Batch Statement Reconciliation:
+   - Periodically fetch PSP/bank statements and reconcile by time+amount+ref → update statuses.
